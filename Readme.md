@@ -1,148 +1,124 @@
-# Backend
-
-- FastAPI 
-
-- Uvicorn (server)
-
-- SQLAlchemy + Alembic (migrations)
-
-- PostgreSQL (metadata)
-
-- TimescaleDB (time-series metrics)
-
-- Redis 
-
-- Celery (workers) + Redis broker 
-
-- WebSockets for live updates
-
-# Frontend
-
-- React + JavaScript
-
-- CSS
-
-- Charts: Plotly or Recharts
-
-- WebSocket client for live panels
-
-# DevOps
-
-- Docker Compose
-
-- GitHub Actions (lint/test/build)
-
-# deploy: 
-- AWS ECS/Fargate or EC2 + Nginx
-
 # Zetapulse — Real-Time Trading Systems Dashboard
 
-Zetapulse is a “control room” web application for trading-systems development. It turns your pipelines into something you can **observe, replay, benchmark, and debug**—with production-style discipline (metrics, repeatability, auditability).
+Zetapulse is a **control-room** web app for trading-systems development. It turns your pipelines into something you can observe, replay, benchmark, and debug—with production-style discipline (**metrics, repeatability, auditability**).
 
-It is designed to pair with projects like **ZetaForge** (replay/sim/execution) and **LatencyLab** (benchmarks), but it can also run standalone with public market feeds.
+This repo is a **working scaffold**:
+- Backend: **FastAPI + Uvicorn**, **SQLAlchemy + Alembic**, **TimescaleDB** (time-series), **Postgres** (metadata), **Redis**
+- Workers: **Celery** (Redis broker/result)
+- Live updates: **WebSockets** (Redis pubsub fanout)
+- Frontend: **React (Vite) + Tailwind + Recharts**
+- DevOps: **Docker Compose**, **GitHub Actions** CI
 
----
-
-## What Zetapulse shows
-
-### 1) Feed Health
-- per-venue message rate (msgs/sec) and reconnect counts
-- dropped message counters + gap detection
-- feed latency & jitter indicators
-- last-seen timestamps per symbol/stream
-
-### 2) Replay Runner
-- select dataset/day + speed (1x/10x/100x)
-- run deterministic replay and persist run artifacts
-- show fills, slippage, queue-position estimate (optional)
-- “replay diff” view: compare two runs (config change, code change)
-
-### 3) Latency Dashboard
-- stage breakdown (ingest → normalize → book → signal → risk → send)
-- histograms for p50/p95/p99/p99.9 per stage
-- “last benchmark run” with commit SHA + machine profile
-
-### 4) PnL Attribution (for sim/backtests)
-- spread capture vs adverse selection vs fees vs latency slip
-- PnL decomposition by venue/symbol/time window
-- trade list + drill-down into individual fill traces
+> The replay task is demo-implemented and generates synthetic latency/PnL/fill data. Swap the Celery task body with ZetaForge / your actual replay engine.
 
 ---
 
-## Suggested Stack
+## Quickstart
 
-**Frontend**
-- React + Tailwind
-- Plotly (or your chart lib)
-- WebSockets/SSE for live updates
-
-**Backend**
-- Django REST *or* FastAPI (both are fine)
-- async workers for ingestion & replay runs (Celery/RQ/Arq)
-- metrics endpoints (Prometheus-style optional)
-
-**Storage**
-- PostgreSQL for metadata + configs
-- TimescaleDB for time-series (ticks, metrics, run traces)
-- Redis for hot cache (optional)
-
----
-
-## Data Model (minimal, scalable)
-
-- `Venue` / `Instrument`
-- `FeedMetric` (rate, drops, jitter)
-- `ReplayRun` (dataset, seed, config hash, commit SHA)
-- `LatencySample` (stage, ns/us, timestamp, run id)
-- `Fill` / `OrderEvent` / `PnLAttributionRow`
-
-Key idea: **every run** is reproducible and stored with:
-- dataset ID + checksum
-- seed
-- config hash
-- commit SHA
-- machine profile (CPU, kernel, governor)
-
----
-
-## Quickstart (example)
-
-### Local (docker-compose suggested)
 ```bash
-docker compose up -d
-# backend: http://localhost:8000
-# frontend: http://localhost:5173
+cp .env.example .env
+docker compose up -d --build
 ```
 
-### Ingest a public feed (example)
+- Backend: http://localhost:8000
+- Frontend: http://localhost:5173
+- OpenAPI: http://localhost:8000/docs
+
+### Demo flow
+1. Open **Replay Runner** and start a run
+2. Watch **Latency Dashboard** and **PnL Attribution** populate
+3. Feed Health receives live WS updates (synthetic by default)
+
+> Disable synthetic metrics by setting `ENABLE_DEMO_PUBLISHER=false` in `.env`.
+
+---
+
+## Key UI pages (portfolio “non-negotiables”)
+
+- **Latency Breakdown + histogram** (Latency page)
+- **Replay Runner (dataset + seed + run complete)** (Replay page)
+- **p99 / p99.9 numbers** (Latency table)
+- **Run metadata box** (Replay page: commit SHA + config hash + machine profile)
+
+---
+
+## Architecture (short)
+
+### Database
+- `Postgres/TimescaleDB` stores metadata + time-series tables.
+- Hypertables: `feed_metrics` and `latency_samples` (created in the first Alembic migration).
+
+### Live updates
+- API endpoints / Celery tasks publish JSON to Redis channel `zetapulse:updates`.
+- `/ws/updates` listens to Redis pubsub and forwards to all connected clients.
+
+### Workers
+- Celery processes replay runs and persists artifacts:
+  - latency samples
+  - fills
+  - pnl attribution rows
+  - and status transitions
+
+---
+
+## Useful commands
+
 ```bash
+# Tail logs
+docker compose logs -f --tail=200
+
+# Run a synthetic ingest stream (optional)
 python3 services/ingest/run_feed.py --venue coinbase --symbols BTC-USD,ETH-USD
+
+# Start a replay run from CLI (computes real dataset sha256)
+python3 services/replay/run_replay.py --dataset data/sample_day.jsonl --seed 42 --speed 10x --config '{"risk":"v1"}'
 ```
 
-### Start a replay run
-```bash
-python3 services/replay/run_replay.py --dataset data/sample_day.jsonl --seed 42 --speed 10x
-```
+---
+
+## API (high level)
+
+- `POST /api/v1/feed/metrics` ingest a feed metric point
+- `GET /api/v1/feed/health` latest metrics per stream
+
+- `POST /api/v1/replay/runs` create a replay run (enqueues Celery task)
+- `GET /api/v1/replay/runs/{id}` fetch run status + metadata
+
+- `POST /api/v1/latency/samples` ingest latency sample points
+- `GET /api/v1/latency/runs/{id}/summary` percentile summary per stage
+
+- `GET /api/v1/pnl/runs/{id}/attribution` pnl decomposition rows
 
 ---
 
-## What to show on your portfolio site (non-negotiables)
+## Deployment options
 
-Add these to the Zetapulse project page:
+### AWS ECS/Fargate (recommended)
+Run 3 services:
+- `backend` (FastAPI)
+- `worker` (Celery)
+- `frontend` (static build served by Nginx or S3/CloudFront)
 
-1) Screenshot: **Latency Breakdown + histogram**
-2) Screenshot: **Replay Runner** (dataset + seed + “run complete”)
-3) A small table of your **latest p99/p99.9** numbers (from ZetaForge/LatencyLab)
-4) A “Run metadata” box showing **commit SHA + config hash**
+You’ll typically place:
+- Postgres/TimescaleDB in RDS or self-managed
+- Redis in ElastiCache
 
-This turns Zetapulse from “a dashboard” into proof of engineering rigor.
+### EC2 + Nginx
+Use `deploy/nginx.conf` as a starting point to:
+- Serve the frontend build (Vite build output)
+- Reverse-proxy `/api` and `/ws` to `uvicorn`
+
+---
+
+## Notes / TODOs for a real trading stack
+
+- Replace demo `replay_run_task` with your ZetaForge replay runner invocation
+- Add authentication/SSO (Cognito, Auth0, etc.)
+- Add Prometheus-style `/metrics` endpoint and optional OpenTelemetry
+- Add run-to-run diff view (two configs, one dataset)
+- Add feed gap anomaly detection rules
 
 ---
 
-## Roadmap
-- run-to-run diff view (two configs, one dataset)
-- anomaly detection for feed gaps (simple rules → later ML)
-- OpenTelemetry trace viewer integration
-- nightly benchmark regression job + alerting
-
----
+## License
+MIT (see LICENSE)

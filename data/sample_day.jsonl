@@ -1,0 +1,2 @@
+{"t":"2026-02-23T00:00:00Z","event":"tick","symbol":"DEMO-USD","px":100.0,"qty":1.0}
+{"t":"2026-02-23T00:00:00.010Z","event":"tick","symbol":"DEMO-USD","px":100.01,"qty":0.5}
